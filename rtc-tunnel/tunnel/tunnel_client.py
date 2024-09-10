@@ -5,20 +5,40 @@ import string
 import traceback
 
 from aiortc import RTCPeerConnection, RTCSessionDescription, RTCDataChannel
+from aiortc.contrib.signaling import BYE
+
 from asyncio import StreamWriter, StreamReader
 
 from .util import now
 from .tasks import Tasks
 from .socket_connection import SocketConnection
 
+import pprint
+
+async def consume_signaling(pc, signaling):
+    while True:
+        obj = await signaling.receive()
+        pprint.pp(obj)
+
+        if isinstance(obj, RTCSessionDescription):
+            if obj.type != 'answer':
+                logging.info('[ERROR] Unexpected answer from signaling server')
+                return
+            await pc.setRemoteDescription(obj)
+            return
+        elif isinstance(obj, RTCIceCandidate):
+            await pc.addIceCandidate(obj)
+        elif obj is BYE:
+            print("Exiting")
+            break
+
 
 class TunnelClient:
-    def __init__(self, host: str, port: int, destination_port: int, signal_server, destination: str):
+    def __init__(self, host: str, port: int, destination_port: int, signal_server):
         self._host = host
         self._port = port
         self._destination_port = destination_port
         self._signal_server = signal_server
-        self._destination = destination
         self._running = asyncio.Event()
         self._tasks = Tasks()
         self._server = None
@@ -31,20 +51,16 @@ class TunnelClient:
         await self._peer_connection.setLocalDescription(await self._peer_connection.createOffer())
 
         logging.info('[INIT] Connecting with signaling server')
-        await self._signal_server.connect_async()
+        await self._signal_server.connect()
 
         logging.info('[INIT] Sending local descriptor to signaling server')
-        self._signal_server.send(self._peer_connection.localDescription, self._destination)
+        await self._signal_server.send(self._peer_connection.localDescription)
 
         logging.info('[INIT] Awaiting answer from signaling server')
-        obj, src = await self._signal_server.receive_async()
-        if not isinstance(obj, RTCSessionDescription) or obj.type != 'answer':
-            logging.info('[ERROR] Unexpected answer from signaling server')
-            return
-        await self._peer_connection.setRemoteDescription(obj)
+        await consume_signaling(self._peer_connection, self._signal_server)
         logging.info('[INIT] Established RTC connection')
 
-        await self._signal_server.close_async()
+        await self._signal_server.close()
         logging.info('[INIT] Closed signaling server')
 
         logging.info('[INIT] Starting socket server on [%s:%s]', self._host, self._port)
@@ -125,7 +141,7 @@ class TunnelClient:
         self._running.set()
         logging.info('[EXIT] Closing signalling server')
         if self._signal_server is not None:
-            await self._signal_server.close_async()
+            await self._signal_server.close()
         logging.info('[EXIT] Closing socket server')
         if self._server is not None:
             self._server.close()

@@ -2,3 +2,4 @@ aiortc
 asyncio
 requests
 websockets
+azure-iot-hub

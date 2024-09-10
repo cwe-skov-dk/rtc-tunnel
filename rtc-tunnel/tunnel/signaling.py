@@ -8,101 +8,150 @@ from json import JSONDecodeError
 from aiortc import RTCSessionDescription, RTCIceCandidate
 from aiortc.sdp import candidate_from_sdp, candidate_to_sdp
 
+from azure.iot.hub import IoTHubRegistryManager
+from azure.iot.hub.models import CloudToDeviceMethod
 
-class ConsoleSignaling:
-    def __init__(self, source: str):
-        self._source = source
-        self._read_pipe = sys.stdin
-        self._read_transport = None
+class UnixSocketSignaling:
+    def __init__(self, path):
+        self._path = path
+        self._server = None
         self._reader = None
-        self._write_pipe = sys.stdout
+        self._writer = None
 
-    async def connect_async(self):
-        loop = asyncio.get_event_loop()
-        self._reader = asyncio.StreamReader(loop=loop)
-        self._read_transport, _ = await loop.connect_read_pipe(
-            lambda: asyncio.StreamReaderProtocol(self._reader),
-            self._read_pipe)
+    async def connect(self):
+        if self._writer is not None:
+            return
 
-    async def close_async(self):
-        if self._reader is not None:
-            self._read_transport.close()
+        connected = asyncio.Event()
 
-    async def receive_async(self):
-        print('-- Please enter a message from remote party to [%s] --' % self._source)
-        while True:
-            data = await self._reader.readline()
-            try:
-                message = data.decode(self._read_pipe.encoding)
-                obj, source = object_from_string(message)
-                print()
-                return obj, source
-            except JSONDecodeError:
-                pass
+        def client_connected(reader, writer):
+            self._reader = reader
+            self._writer = writer
+            connected.set()
 
-    def send(self, descr, dest: str):
-        print('-- Please send this message to the remote party named [%s] --' % dest)
-        message = object_to_string(descr, self._source)
-        self._write_pipe.write(message + '\n')
-        print()
+        self._server = await asyncio.start_unix_server(
+            client_connected, path=self._path
+        )
+        await connected.wait()
 
+    async def close(self):
+        print(f'unix close')
+        if self._writer is not None:
+            await self.send(BYE)
+            self._writer.close()
+            self._reader = None
+            self._writer = None
+        if self._server is not None:
+            self._server.close()
+            self._server = None
+            os.unlink(self._path)
 
-class WebSignaling:
-    def __init__(self, source: str, send_url: str, receive_url: str):
-        self._source = source
-        self._send_url = send_url
-        self._receive_url = receive_url
-        self._client = None
+    async def receive(self):
+        try:
+            data = await self._reader.readuntil()
+            print(f'unix receive: {data}')
+        except asyncio.IncompleteReadError:
+            print(f'unix receive: IncompleteReadError')
+            return
+        return object_from_string(data.decode("utf8"))
 
-    async def connect_async(self):
-        self._client = await websockets.connect(self._receive_url + '/topic/message/' + self._source)
-
-    async def close_async(self):
-        if self._client is not None:
-            await self._client.close()
-
-    async def receive_async(self):
-        message = await self._client.recv()
-        return object_from_string(message)
-
-    def send(self, descr, dest: str):
-        message = object_to_string(descr, self._source)
-        response = requests.post(self._send_url + '/message/' + dest, data=message)
-        if response.status_code != 200:
-            raise IOError('Unable to send signaling message: ' + str(response.status_code))
+    async def send(self, descr):
+        data = object_to_string(descr).encode("utf8")
+        print(f'unix send: {data}')
+        self._writer.write(data + b"\n")
 
 
-def object_to_string(obj, source: str):
+class IoTSignaling:
+    def __init__(self, iothub_connection_string: str, device_id: str, method_name: str):
+        self._iothub_connection_string = iothub_connection_string
+        self._device_id = device_id
+        self._method_name = method_name
+        self._registry_manager = None
+        self._response = None
+
+    async def connect(self):
+        self._registry_manager = IoTHubRegistryManager.from_connection_string(self._iothub_connection_string)
+        return 0
+
+    async def close(self):
+        self._registry_manager = None
+
+    async def send(self, descr):
+        print('descr: ')
+        pprint.pp(descr);
+        message = object_to_dict(descr)
+        print('message: ')
+        pprint.pp(message);
+        method = CloudToDeviceMethod(method_name=self._method_name, payload=message)
+        print('method: ')
+        pprint.pp(method);
+        response = self._registry_manager.invoke_device_method(self._device_id, method).as_dict()
+        print('response: ')
+        pprint.pp(response)
+        if response['status'] == 200:
+            self._response = response['payload']
+
+    async def receive(self):
+        print('response: ')
+        pprint.pp(self._response)
+        if self._response:
+            print('obj: ')
+            obj = object_from_dict(self._response)
+            pprint.pp(obj)
+            self._response = None
+            return obj
+        return None
+
+
+def object_to_string(obj):
     if isinstance(obj, RTCSessionDescription):
-        data = {
-            'sdp': obj.sdp,
-            'type': obj.type
-        }
+        message = { 'sdp': obj.sdp, 'type': obj.type }
     elif isinstance(obj, RTCIceCandidate):
-        data = {
+        message = {
             'candidate': 'candidate:' + candidate_to_sdp(obj),
             'id': obj.sdpMid,
             'label': obj.sdpMLineIndex,
             'type': 'candidate',
         }
     else:
-        raise ValueError('Can only send RTCSessionDescription or RTCIceCandidate')
-    message = {
-        'source': source,
-        'data': data
-    }
+        assert obj is BYE
+        message = { 'type': 'bye' }
     return json.dumps(message, sort_keys=True)
 
+def object_to_dict(obj):
+    if isinstance(obj, RTCSessionDescription):
+        return { 'sdp': obj.sdp, 'type': obj.type }
+    elif isinstance(obj, RTCIceCandidate):
+        return {
+            'candidate': 'candidate:' + candidate_to_sdp(obj),
+            'id': obj.sdpMid,
+            'label': obj.sdpMLineIndex,
+            'type': 'candidate',
+        }
+    else:
+        assert obj is BYE
+        return { 'type': 'bye' }
 
-def object_from_string(message_str):
-    obj = json.loads(message_str)
-    data = obj['data']
-    source = obj['source']
+def object_from_string(message):
+    data = json.loads(message)
 
     if data['type'] in ['answer', 'offer']:
-        return RTCSessionDescription(**data), source
+        return RTCSessionDescription(**data)
     elif data['type'] == 'candidate':
         candidate = candidate_from_sdp(data['candidate'].split(':', 1)[1])
         candidate.sdpMid = data['id']
         candidate.sdpMLineIndex = data['label']
-        return candidate, source
+        return candidate
+    elif message['type'] == 'bye':
+        return BYE
+
+def object_from_dict(message):
+    if message['type'] in ['answer', 'offer']:
+        return RTCSessionDescription(**message)
+    elif message['type'] == 'candidate' and message['candidate']:
+        candidate = candidate_from_sdp(message['candidate'].split(':', 1)[1])
+        candidate.sdpMid = message['id']
+        candidate.sdpMLineIndex = message['label']
+        return candidate
+    elif message['type'] == 'bye':
+        return BYE

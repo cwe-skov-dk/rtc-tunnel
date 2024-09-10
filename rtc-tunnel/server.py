@@ -6,7 +6,9 @@ import logging.handlers
 import sys
 
 from tunnel import TunnelServer
-from tunnel.signaling import WebSignaling, ConsoleSignaling
+from tunnel.signaling import UnixSocketSignaling
+
+from aiortc.contrib.signaling import add_signaling_arguments, create_signaling
 
 
 logging.basicConfig(
@@ -24,12 +26,14 @@ if __name__ == '__main__':
     parser.add_argument('--use-web-signal', '-w', help='Enable web signal server instead of console', action='store_true')
     parser.add_argument('--signal-send-url', '-u', help='Signal server send url', default='http://user:password@192.168.0.114:8080')
     parser.add_argument('--signal-receive-url', '-r', help='Signal server receive url', default='ws://user:password@192.168.0.114:8080')
+    add_signaling_arguments(parser)
+
     args = parser.parse_args()
 
-    if args.use_web_signal:
-        signal_server = WebSignaling(args.source_name, args.signal_send_url, args.signal_receive_url)
+    if args.signaling == "unix-socket":
+        signal_server = UnixSocketSignaling(args.signaling_path)
     else:
-        signal_server = ConsoleSignaling(args.source_name)
+        signal_server = create_signaling(args)
     server = TunnelServer(signal_server)
 
     loop = asyncio.get_event_loop()

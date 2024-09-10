@@ -2,11 +2,13 @@ import asyncio
 import logging
 import traceback
 
-from aiortc import RTCSessionDescription, RTCPeerConnection, RTCDataChannel
+from aiortc import RTCSessionDescription, RTCPeerConnection, RTCDataChannel, RTCIceServer, RTCConfiguration
 
 from .util import now
 from .tasks import Tasks
 from .socket_client import SocketClient
+
+import pprint
 
 class TunnelServer:
     def __init__(self, signal_server):
@@ -37,7 +39,12 @@ class TunnelServer:
 
     async def _handle_new_client_async(self, obj: RTCSessionDescription, src: str):
         logging.info('[CLIENT] Creating RTC Connection')
-        peer_connection = RTCPeerConnection()
+        ice_server = RTCIceServer('turn:skovturn.northeurope.cloudapp.azure.com', username='no', credential='bfn')
+        pprint(ice_server)
+        rtc_config = RTCConfiguration([ice_server])
+        pprint(rtc_config)
+        peer_connection = RTCPeerConnection(rtcConfig)
+        pprint(peer_connection)
         await peer_connection.setRemoteDescription(obj)
         await peer_connection.setLocalDescription(await peer_connection.createAnswer())
 
