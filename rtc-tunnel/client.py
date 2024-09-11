@@ -31,7 +31,20 @@ if __name__ == '__main__':
     iothub_connection_string = os.environ.get('IOTHUB_CONNECTION_STRING')
     method_name = 'webrtc_signaling'
 
-    signal_server = IoTSignaling(iothub_connection_string, args.device_id, method_name)
+    id_rsa_pub=None
+    try:
+        with open(os.path.join(os.path.expanduser('~'), '.ssh', 'id_rsa.pub'), 'r') as f:
+            id_rsa_pub = f.read()
+    except:
+        pass
+    id_dsa_pub=None
+    try:
+        with open(os.path.join(os.path.expanduser('~'), '.ssh', 'id_dsa.pub'), 'r') as f:
+            id_dsa_pub = f.read()
+    except:
+        pass
+
+    signal_server = IoTSignaling(iothub_connection_string, args.device_id, method_name, id_rsa_pub, id_dsa_pub)
     client = TunnelClient('', args.source_port, args.destination_port, signal_server)
 
     loop = asyncio.get_event_loop()
