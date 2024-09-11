@@ -9,6 +9,11 @@ import os
 from tunnel import TunnelClient
 from tunnel.signaling import IoTSignaling
 
+from azure.iot.hub import IoTHubRegistryManager
+from azure.iot.hub.models import QuerySpecification, QueryResult, Twin
+
+import pprint
+
 
 logging.basicConfig(
     level=logging.INFO,
@@ -19,11 +24,21 @@ logging.basicConfig(
     ])
 
 
+def resolve_device_id_from_mac(iothub_connection_string, mac_address):
+    registry_manager = IoTHubRegistryManager.from_connection_string(iothub_connection_string)
+    query_spec = QuerySpecification(query=f"SELECT * FROM devices WHERE properties.reported.[[macAddress]] = '{mac_address}'")
+    query = registry_manager.query_iot_hub(query_spec, None, 1)
+    for twin in query.items:
+        return twin.device_id
+    return None
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='RTC Tunneling client')
     parser.add_argument('--destination-port', '-d', help='Destination port', default=22)
     parser.add_argument('--source-port', '-p', help='Source port', default=3334)
     parser.add_argument('--device-id', '-i', help='Device id', default='')
+    parser.add_argument('--mac-address', '-m', help='MAC address', default='')
     # add_signaling_arguments(parser)
 
     args = parser.parse_args()
@@ -44,7 +59,11 @@ if __name__ == '__main__':
     except:
         pass
 
-    signal_server = IoTSignaling(iothub_connection_string, args.device_id, method_name, id_rsa_pub, id_dsa_pub)
+    if args.mac_address:
+       device_id = resolve_device_id_from_mac(iothub_connection_string, args.mac_address)
+    else:
+       device_id = args.device_id
+    signal_server = IoTSignaling(iothub_connection_string, device_id, method_name, id_rsa_pub, id_dsa_pub)
     client = TunnelClient('', args.source_port, args.destination_port, signal_server)
 
     loop = asyncio.get_event_loop()
