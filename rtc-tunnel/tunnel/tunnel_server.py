@@ -3,6 +3,7 @@ import logging
 import traceback
 
 from aiortc import RTCSessionDescription, RTCPeerConnection, RTCDataChannel, RTCIceServer, RTCConfiguration
+from aiortc.contrib.signaling import BYE
 
 from .util import now
 from .tasks import Tasks
@@ -20,36 +21,38 @@ class TunnelServer:
         while not self._running.is_set():
             logging.info('[INIT] Connecting with signaling server')
             try:
-                await self._signal_server.connect_async()
-            except Exception:
+                await self._signal_server.connect()
+            except Exception as e:
+                pprint.pp(e)
                 await asyncio.sleep(300)
                 continue
 
             logging.info('[INIT] Awaiting offers from signaling server')
             while True:
                 try:
-                    obj, src = await self._signal_server.receive_async()
-                except Exception:
+                    obj = await self._signal_server.receive()
+                except Exception as e:
+                    print(f'exception: {e}')
                     break
                 if isinstance(obj, RTCSessionDescription) and obj.type == 'offer':
-                    await self._handle_new_client_async(obj, src)
+                    await self._handle_new_client_async(obj)
                 else:
                     logging.info('[WARNING] Unknown request from signaling server, ignoring')
             logging.info('[EXIT] Connection with signaling server broken')
 
-    async def _handle_new_client_async(self, obj: RTCSessionDescription, src: str):
+    async def _handle_new_client_async(self, obj: RTCSessionDescription):
         logging.info('[CLIENT] Creating RTC Connection')
         ice_server = RTCIceServer('turn:skovturn.northeurope.cloudapp.azure.com', username='no', credential='bfn')
-        pprint(ice_server)
+        pprint.pp(ice_server)
         rtc_config = RTCConfiguration([ice_server])
-        pprint(rtc_config)
-        peer_connection = RTCPeerConnection(rtcConfig)
-        pprint(peer_connection)
+        pprint.pp(rtc_config)
+        peer_connection = RTCPeerConnection(rtc_config)
+        pprint.pp(peer_connection)
         await peer_connection.setRemoteDescription(obj)
         await peer_connection.setLocalDescription(await peer_connection.createAnswer())
 
         logging.info('[CLIENT] Sending local descriptor to signaling server')
-        self._signal_server.send(peer_connection.localDescription, src)
+        await self._signal_server.send(peer_connection.localDescription)
 
         @peer_connection.on('datachannel')
         def on_datachannel(channel: RTCDataChannel):
@@ -120,7 +123,7 @@ class TunnelServer:
         logging.info('[EXIT] Closing signalling server')
         self._running.set()
         if self._signal_server is not None:
-            await self._signal_server.close_async()
+            await self._signal_server.close()
         logging.info('[EXIT] Waiting for all tasks to finish')
         await self._tasks.close_async()
         logging.info('[EXIT] Closed tunneling server')
