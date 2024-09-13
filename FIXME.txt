@@ -1,0 +1,9 @@
+asyncssh: Submit fix for asyncssh.connect() called with non-TCP sock argument
+
+file: asyncssh/connection.py
+
+1265    def connection_made(self, transport: asyncio.BaseTransport) -> None:
+        ...
+1275            if sock.family in {socket.AF_INET, socket.AF_INET6}:
+1276                sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+
