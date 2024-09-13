@@ -164,7 +164,7 @@ class SshClient:
                 try:
                     data = await connection.receive_async()
                 except Exception:
-                    # traceback.print_exc()
+                    traceback.print_exc()
                     break
                 if not data:
                     break
