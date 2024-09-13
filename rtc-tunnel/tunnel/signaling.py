@@ -173,7 +173,7 @@ def object_from_string(message):
 
 def object_from_dict(message):
     if message['type'] in ['answer', 'offer']:
-        return RTCSessionDescription(sdp=message['sdp'], type=data['type'])
+        return RTCSessionDescription(sdp=message['sdp'], type=message['type'])
     elif message['type'] == 'candidate' and message['candidate']:
         candidate = candidate_from_sdp(message['candidate'].split(':', 1)[1])
         candidate.sdpMid = message['id']
