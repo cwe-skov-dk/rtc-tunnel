@@ -149,43 +149,34 @@ class TtyClient:
             self._configure_channel(channel, reader, writer, client_id)
 
     def _configure_channel(self, channel: RTCDataChannel, reader, writer, client_id: str):
+        fd = sys.stdin.fileno()
+        old = termios.tcgetattr(fd)
+
         @channel.on('message')
         def on_message(message):
             writer.write(message)
 
         @channel.on('close')
         def on_close():
+            termios.tcsetattr(fd, termios.TCSANOW, old)
             logging.info('[CLIENT %s] Datachannel %s closed', client_id, channel.label)
             self._running.set()
 
         print('Inside _configure_channel')
 
-        async def run_tty():
-            async with asyncssh.connect(_hostname, username=_username, sock=_sock, known_hosts=None) as conn:
-                fd = sys.stdin.fileno()
-                old = termios.tcgetattr(fd)
-                try:
-                    new = termios.tcgetattr(fd)
-                    new[0] &= ~(termios.IGNBRK | termios.BRKINT | termios.PARMRK | termios.ISTRIP | termios.INLCR | termios.IGNCR | termios.ICRNL | termios.IXON)
-                    new[1] &= ~(termios.OPOST)
-                    new[2] &= ~(termios.CSIZE | termios.PARENB)
-                    new[2] |= termios.CS8
-                    new[3] &= ~(termios.ECHO | termios.ECHONL | termios.ICANON | termios.ISIG | termios.IEXTEN)
-                    new[6][termios.VMIN] = b'\x01'
-                    new[6][termios.VTIME] = b'\x00'
-                    termios.tcsetattr(fd, termios.TCSANOW, new)
- 
-                    async with conn.create_process(stdin=sys.stdin, stdout=sys.stdout, stderr=sys.stderr, recv_eof=False,
-                                                   term_type=os.getenv('TERM'), term_size=os.get_terminal_size()) as p:
-                        await p.wait()
-                except asyncssh.ProcessError as exc:
-                    print(exc.stderr, end='')
-                    print(f'Process exited with status {exc.exit_status}', file=sys.stderr)
-                except Exception:
-                    pass
-                termios.tcsetattr(fd, termios.TCSANOW, old)
-
         async def receive_loop_async():
+            fd = sys.stdin.fileno()
+
+            new = termios.tcgetattr(fd)
+            new[0] &= ~(termios.IGNBRK | termios.BRKINT | termios.PARMRK | termios.ISTRIP | termios.INLCR | termios.IGNCR | termios.ICRNL | termios.IXON)
+            new[1] &= ~(termios.OPOST)
+            new[2] &= ~(termios.CSIZE | termios.PARENB)
+            new[2] |= termios.CS8
+            new[3] &= ~(termios.ECHO | termios.ECHONL | termios.ICANON | termios.ISIG | termios.IEXTEN)
+            new[6][termios.VMIN] = b'\x01'
+            new[6][termios.VTIME] = b'\x00'
+            termios.tcsetattr(fd, termios.TCSANOW, new)
+
             while True:
                 try:
                     data = await reader.read(1024)
@@ -197,13 +188,6 @@ class TtyClient:
                 channel.send(data)
             logging.info('[CLIENT %s] Socket connection closed', client_id)
             channel.close()
-
-        # logging.basicConfig(level='DEBUG')
-        # asyncssh.set_log_level(logging.DEBUG)
-        # asyncssh.set_debug_level(2)
-
-        # task = asyncio.ensure_future(run_tty())
-        # print('run_tty started')
 
         self._tasks.start_task(receive_loop_async())
         logging.info('[CLIENT %s] Datachannel %s configured', client_id, channel.label)
