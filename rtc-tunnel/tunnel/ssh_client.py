@@ -7,7 +7,7 @@ import os
 import sys
 import termios
 
-from aiortc import RTCPeerConnection, RTCSessionDescription, RTCDataChannel
+from aiortc import RTCPeerConnection, RTCSessionDescription, RTCDataChannel, RTCIceServer, RTCConfiguration
 from aiortc.contrib.signaling import BYE
 
 import socket
@@ -49,8 +49,24 @@ class SshClient:
 
 
     async def run_async(self):
+        logging.info('[CLIENT] Creating RTC Connection')
+        stun_server = RTCIceServer('stun:skovturn.northeurope.cloudapp.azure.com')
+        pprint.pp(stun_server)
+        # turn_server = RTCIceServer('turn:skovturn.northeurope.cloudapp.azure.com', username='no', credential='bfn')
+        # pprint.pp(turn_server)
+        rtc_config = RTCConfiguration([stun_server])
+        pprint.pp(rtc_config)
         logging.info('[INIT] Creating RTC Connection')
-        self._peer_connection = RTCPeerConnection()
+        self._peer_connection = RTCPeerConnection(rtc_config)
+
+        @self._peer_connection.on('icegatheringstatechange')
+        def on_IceGatheringStateChange():
+            logging.info(f'[ICE] GatheringState changed to {self._peer_connection.iceGatheringState}')
+            if self._peer_connection.iceGatheringState == 'complete':
+                candidates = self._peer_connection.sctp.transport.transport.iceGatherer.getLocalCandidates()
+                for c in candidates:
+                    logging.info(f'[ICE] LocalCandidate: {c}')
+
         self._create_healthcheck_channel()
         await self._peer_connection.setLocalDescription(await self._peer_connection.createOffer())
 
