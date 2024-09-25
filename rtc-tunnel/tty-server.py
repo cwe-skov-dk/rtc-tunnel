@@ -15,7 +15,7 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s %(message)s',
     handlers=[
-        logging.handlers.TimedRotatingFileHandler('/tmp/rtc-server.log', when="midnight", backupCount=3),
+        # logging.handlers.TimedRotatingFileHandler('/tmp/rtc-server.log', when="midnight", backupCount=3),
         logging.StreamHandler(sys.stdout)
     ])
 
