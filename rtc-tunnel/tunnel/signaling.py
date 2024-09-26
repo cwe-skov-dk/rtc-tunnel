@@ -5,11 +5,19 @@ import os
 import requests
 import websockets
 from json import JSONDecodeError
+from enum import Enum
 
 from aiortc import RTCSessionDescription, RTCIceCandidate
 from aiortc.sdp import candidate_from_sdp, candidate_to_sdp
+from aiortc.contrib.signaling import BYE
 
 import pprint
+
+
+class Flavour(Enum):
+    PLAIN = 0
+    DESCRIPTION = 1
+
 
 class UnixSocketSignaling:
     def __init__(self, path):
@@ -17,6 +25,7 @@ class UnixSocketSignaling:
         self._server = None
         self._reader = None
         self._writer = None
+        self._flavour = Flavour.PLAIN
 
     async def connect(self):
         if self._writer is not None:
@@ -53,10 +62,11 @@ class UnixSocketSignaling:
         except asyncio.IncompleteReadError:
             print(f'unix receive: IncompleteReadError')
             return
-        return object_from_string(data.decode("utf8"))
+        obj, self._flavour = object_from_string(data.decode("utf8"))
+        return obj
 
     async def send(self, descr):
-        data = object_to_string(descr).encode("utf8")
+        data = object_to_string(descr, self._flavour).encode("utf8")
         print(f'unix send: {data}')
         self._writer.write(data + b"\n")
 
@@ -111,9 +121,12 @@ except:
     pass
 
 
-def object_to_string(obj):
+def object_to_string(obj, flavour):
     if isinstance(obj, RTCSessionDescription):
-        message = { 'sdp': obj.sdp, 'type': obj.type }
+        if flavour == Flavour.DESCRIPTION:
+            message = { 'remoteDescription': { 'sdp': obj.sdp, 'type': obj.type }}
+        else:
+            message = { 'sdp': obj.sdp, 'type': obj.type }
     elif isinstance(obj, RTCIceCandidate):
         message = {
             'candidate': 'candidate:' + candidate_to_sdp(obj),
@@ -154,26 +167,33 @@ def add_authorized_key(pub_key):
             f.write(pub_key)
 
 def object_from_string(message):
-    data = json.loads(message)
+    doc = json.loads(message)
 
-    if 'id_rsa_pub' in data:
-        add_authorized_key(data['id_rsa_pub'])
-    if 'id_dsa_pub' in data:
-        add_authorized_key(data['id_dsa_pub'])
+    if 'id_rsa_pub' in doc:
+        add_authorized_key(doc['id_rsa_pub'])
+    if 'id_dsa_pub' in doc:
+        add_authorized_key(doc['id_dsa_pub'])
+
+    if 'localDescription' in doc:
+        data = doc['localDescription']
+        flavour = Flavour.DESCRIPTION
+    else:
+        data = doc
+        flavour = Flavour.PLAIN
 
     if data['type'] in ['answer', 'offer']:
-        return RTCSessionDescription(sdp=data['sdp'], type=data['type'])
+        return RTCSessionDescription(sdp=data['sdp'], type=data['type']), flavour
     elif data['type'] == 'candidate':
         candidate = candidate_from_sdp(data['candidate'].split(':', 1)[1])
         candidate.sdpMid = data['id']
         candidate.sdpMLineIndex = data['label']
-        return candidate
-    elif message['type'] == 'bye':
-        return BYE
+        return candidate, flavour
+    elif data['type'] == 'bye':
+        return BYE, flavour
 
 def object_from_dict(message):
     if message['type'] in ['answer', 'offer']:
-        return RTCSessionDescription(sdp=message['sdp'], type=message['type'])
+        return RTCSessionDescription(sdp=message['sdp'], type=data['type'])
     elif message['type'] == 'candidate' and message['candidate']:
         candidate = candidate_from_sdp(message['candidate'].split(':', 1)[1])
         candidate.sdpMid = message['id']

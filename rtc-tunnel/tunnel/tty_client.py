@@ -127,10 +127,6 @@ class TtyClient:
         client_id = ''.join(random.choice(string.ascii_uppercase + string.ascii_lowercase + string.digits) for _ in range(8))
         logging.info('[CLIENT %s] New client connected', client_id)
 
-        # rsock, wsock = socket.socketpair()
-        # reader, writer = await asyncio.open_connection(sock=rsock)
-        # connection = SocketConnection(reader, writer)
-
         channel = self._peer_connection.createDataChannel('tunnel-%s-%s' % (client_id, self._destination_port))
         logging.info('[CLIENT %s] Datachannel %s created', client_id, channel.label)
 
@@ -147,6 +143,7 @@ class TtyClient:
         async def on_open():
             reader, writer = await connect_stdin_stdout()
             self._configure_channel(channel, reader, writer, client_id)
+
 
     def _configure_channel(self, channel: RTCDataChannel, reader, writer, client_id: str):
         fd = sys.stdin.fileno()
